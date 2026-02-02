@@ -1,0 +1,29 @@
+<template>
+    <div class="slds-m-top_medium slds-m-bottom_x-large">
+        <h2 class="slds-text-heading_small slds-m-bottom_medium">
+            Button menu with only <code>lightning-menu-item</code> elements.
+        </h2>
+
+        <!-- Simple -->
+        <template if:true={asd}>
+            <div class="slds-p-around_medium lgc-bg">
+                <lightning-button-menu icon-name="utility:down" alternative-text="More Actions"
+                                variant="border-filled" class="force-left-menu" menu-alignment="right">
+                                <lightning-menu-item label="Aggiungi Ricambi"></lightning-menu-item>
+                                <lightning-menu-item label="Aggiungi ricambi da CSV"></lightning-menu-item>
+                                <lightning-menu-item label="Apri SIS"></lightning-menu-item>
+                                <lightning-menu-item label="Recupera disponibilità ricambi"></lightning-menu-item>
+                                <lightning-menu-item label="Add Group"></lightning-menu-item>
+                                <lightning-menu-item label="Mostra alternative"></lightning-menu-item>
+                                <lightning-menu-item label="Add Products"></lightning-menu-item>
+                                <lightning-menu-item label="Delete Lines"></lightning-menu-item>
+                                <lightning-menu-item label="Quick Save"></lightning-menu-item>
+                                <lightning-menu-item label="Calculate"></lightning-menu-item>
+                                <lightning-menu-item label="Cancel"></lightning-menu-item>
+                                <lightning-menu-item label="Save" onclick={handleSave}></lightning-menu-item>
+                                <lightning-menu-item label="Invio Ordine"></lightning-menu-item>
+                            </lightning-button-menu>
+            </div>
+        </template>
+    </div>
+</template>

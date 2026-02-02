@@ -1,0 +1,375 @@
+<template>
+    <!-- Loading Spinner -->
+    <template if:true={isLoading}>
+        <div class="slds-is-relative" style="height: 5rem;">
+            <lightning-spinner alternative-text="Loading" size="medium"></lightning-spinner>
+        </div>
+    </template>
+
+    <!-- Header with Sort -->
+    <div class="feed-header">
+        <div class="slds-form-element">
+            <label class="slds-form-element__label" for="sort-select">Sort by:</label>
+            <div class="slds-form-element__control">
+                <lightning-combobox
+                    name="sortBy"
+                    value={sortByValue}
+                    placeholder="Latest Posts"
+                    options={sortByOptions}
+                    onchange={handleSortChange}
+                    dropdown-alignment="auto"
+                    class="sort-dropdown">
+                </lightning-combobox>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Feed Container -->
+    <div class="chatter-feed-container">
+
+        <!-- Publisher (New Post Section) -->
+        <div class="publisher-container">
+            <!-- Tabs (Only Post) -->
+            <ul class="slds-tabs_default__nav publisher-tabs" role="tablist">
+                <li class="slds-tabs_default__item slds-is-active" role="presentation">
+                    <a class="slds-tabs_default__link" href="javascript:void(0);" role="tab" aria-selected="true">Post</a>
+                </li>
+            </ul>
+
+            <!-- Publisher Content -->
+            <div class="slds-publisher">
+                <div class="publisher-input-wrapper">
+                    <lightning-input
+                        type="text"
+                        name="newPost"
+                        value={newPostText}
+                        onchange={handleNewPostChange}
+                        onkeyup={handleNewPostKeyUp}
+                        placeholder="Share an update..."
+                        variant="label-hidden"
+                        class="publisher-input-centered">
+                    </lightning-input>
+
+                    <lightning-button
+                        label="Share"
+                        variant="brand"
+                        onclick={handlePostSubmit}
+                        disabled={postButtonDisabled}
+                        class="share-button">
+                    </lightning-button>
+
+                    <!-- User Mention Suggestions -->
+                    <template if:true={showUserSuggestions}>
+                        <div class="slds-dropdown slds-dropdown_left slds-dropdown_small mention-dropdown-container">
+                            <ul class="slds-listbox slds-listbox_vertical" role="listbox">
+                                <template for:each={userSuggestions} for:item="user">
+                                    <li key={user.id} role="presentation" class="slds-listbox__item">
+                                        <div class="slds-media slds-listbox__option slds-listbox__option_plain slds-media_small"
+                                             role="option"
+                                             data-user-id={user.id}
+                                             data-user-name={user.name}
+                                             onclick={handleUserSelect}>
+                                            <span class="slds-media__figure">
+                                                <span class="slds-avatar slds-avatar_circle slds-avatar_x-small">
+                                                    <img src={user.photoUrl} alt={user.name} />
+                                                </span>
+                                            </span>
+                                            <span class="slds-media__body">
+                                                <span class="slds-listbox__option-text slds-listbox__option-text_entity">
+                                                    {user.name}
+                                                </span>
+                                            </span>
+                                        </div>
+                                    </li>
+                                </template>
+                            </ul>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+
+        <!-- Error Message -->
+        <template if:true={hasError}>
+            <div class="slds-notify slds-notify_alert slds-alert_error slds-m-bottom_small" role="alert">
+                <span class="slds-assistive-text">error</span>
+                <h2>Error loading feed: {error.body.message}</h2>
+            </div>
+        </template>
+
+        <!-- Feed Items -->
+        <template if:true={hasFeedItems}>
+            <ul class="slds-feed">
+                <template for:each={processedFeedItems} for:item="item">
+                    <li key={item.id} class="slds-feed__item">
+                        <article class="slds-post">
+                            <!-- Post Header -->
+                            <header class="slds-post__header">
+                                <div class="slds-grid slds-grid_align-spread">
+                                    <div class="slds-media slds-has-flexi-truncate">
+                                        <div class="slds-media__figure">
+                                            <a href={item.actorUrl} class="slds-avatar slds-avatar_circle slds-avatar_medium">
+                                                <img src={item.actorPhotoUrl} alt={item.actorName} />
+                                            </a>
+                                        </div>
+                                        <div class="slds-media__body">
+                                            <p>
+                                                <a href={item.actorUrl}>
+                                                    <span class="slds-text-title slds-text-link">{item.actorName}</span>
+                                                </a>
+                                                <template if:true={item.parentName}>
+                                                    <span class="slds-text-body_small"> — </span>
+                                                    <a href={item.parentUrl}>
+                                                        <span class="slds-text-body_small">{item.parentName}</span>
+                                                    </a>
+                                                </template>
+                                            </p>
+                                            <p class="slds-text-body_small slds-text-color_weak">{item.formattedDate}</p>
+                                        </div>
+                                    </div>
+                                    <div class="slds-no-flex header-actions">
+                                        <lightning-button-menu
+                                            alternative-text="Show more"
+                                            icon-size="x-small"
+                                            menu-alignment="right"
+                                            variant="border-filled"
+                                            data-feed-item-id={item.id}
+                                            onselect={handleMenuSelect}>
+                                            <template if:true={item.canEdit}>
+                                                <lightning-menu-item value="edit" label="Edit Post"></lightning-menu-item>
+                                            </template>
+                                            <template if:true={item.canDelete}>
+                                                <lightning-menu-item value="delete" label="Delete Post"></lightning-menu-item>
+                                            </template>
+                                        </lightning-button-menu>
+                                    </div>
+                                </div>
+                            </header>
+
+                            <!-- Post Content -->
+                            <div class="slds-post__content slds-text-longform">
+                                <!-- Normal view -->
+                                <template if:false={item.isEditing}>
+                                    <p class="post-body-text">{item.bodyText}</p>
+                                </template>
+
+                                <!-- Edit mode -->
+                                <template if:true={item.isEditing}>
+                                    <lightning-textarea
+                                        value={item.editText}
+                                        data-feed-item-id={item.id}
+                                        onchange={handleEditTextChange}
+                                        class="edit-textarea">
+                                    </lightning-textarea>
+                                    <div class="slds-m-top_small">
+                                        <lightning-button
+                                            label="Save"
+                                            variant="brand"
+                                            data-feed-item-id={item.id}
+                                            onclick={handleSaveEdit}
+                                            class="slds-m-right_x-small">
+                                        </lightning-button>
+                                        <lightning-button
+                                            label="Cancel"
+                                            variant="neutral"
+                                            data-feed-item-id={item.id}
+                                            onclick={handleCancelEdit}>
+                                        </lightning-button>
+                                    </div>
+                                </template>
+                            </div>
+
+                            <!-- Post Footer (Like, Comment actions) -->
+                            <footer class="slds-post__footer">
+                                <div class="slds-grid slds-grid_align-spread slds-grid_vertical-align-center">
+                                    <ul class="slds-post__footer-actions-list slds-list_horizontal">
+                                        <!-- Like Action -->
+                                        <li class="slds-item slds-m-right_medium">
+                                            <a href="javascript:void(0);"
+                                               data-feed-item-id={item.id}
+                                               data-is-liked={item.isLiked}
+                                               onclick={handleLike}
+                                               class="slds-text-link">
+                                                <template if:true={item.isLiked}>
+                                                    <lightning-icon icon-name="utility:like" size="x-small" class="slds-icon-text-default liked-icon"></lightning-icon>
+                                                </template>
+                                                <template if:false={item.isLiked}>
+                                                    <lightning-icon icon-name="utility:like" size="x-small" class="slds-icon-text-default"></lightning-icon>
+                                                </template>
+                                                <span class="slds-m-left_xx-small">Like</span>
+                                            </a>
+                                        </li>
+
+                                        <!-- Comment Action -->
+                                        <li class="slds-item">
+                                            <a href="javascript:void(0);" class="slds-text-link">
+                                                <lightning-icon icon-name="utility:comment" size="x-small" class="slds-icon-text-default"></lightning-icon>
+                                                <span class="slds-m-left_xx-small">Comment</span>
+                                            </a>
+                                        </li>
+                                    </ul>
+
+                                    <!-- Like/Comment Summary (Right Side) -->
+                                    <template if:true={item.hasInteractions}>
+                                        <div class="slds-text-body_small slds-text-color_weak interaction-summary">
+                                            <template if:true={item.hasComments}>
+                                                <span>{item.commentCount} comment<template if:false={item.isSingleComment}>s</template></span>
+                                            </template>
+                                            <template if:true={item.hasLikes}>
+                                                <template if:true={item.hasComments}>
+                                                    <span class="slds-m-horizontal_xx-small">·</span>
+                                                </template>
+                                                <span>{item.likeCount} view<template if:false={item.isSingleView}>s</template></span>
+                                            </template>
+                                        </div>
+                                    </template>
+                                </div>
+                            </footer>
+
+                            <!-- Comments Section -->
+                            <template if:true={item.hasComments}>
+                                <div class="comments-list">
+                                    <a href="javascript:void(0);" class="more-comments-link">More comments</a>
+                                    <ul class="slds-comments">
+                                        <template for:each={item.processedComments} for:item="comment">
+                                            <li key={comment.id} class="slds-comment">
+                                                <div class="slds-media">
+                                                    <div class="slds-media__figure">
+                                                        <a href={comment.userUrl} class="slds-avatar slds-avatar_circle slds-avatar_medium">
+                                                            <img src={comment.userPhotoUrl} alt={comment.userName} />
+                                                        </a>
+                                                    </div>
+                                                    <div class="slds-media__body">
+                                                        <div class="slds-comment__content">
+                                                            <p>
+                                                                <a href={comment.userUrl}>
+                                                                    <span class="slds-text-title">{comment.userName}</span>
+                                                                </a>
+                                                            </p>
+                                                            <p class="slds-text-body_small slds-text-color_weak">{comment.formattedDate}</p>
+
+                                                            <!-- Normal view -->
+                                                            <template if:false={comment.isEditing}>
+                                                                <div class="slds-text-longform slds-m-top_xx-small">
+                                                                    <p>{comment.bodyText}</p>
+                                                                </div>
+                                                            </template>
+
+                                                            <!-- Edit mode -->
+                                                            <template if:true={comment.isEditing}>
+                                                                <lightning-textarea
+                                                                    value={comment.editText}
+                                                                    data-comment-id={comment.id}
+                                                                    data-feed-item-id={item.id}
+                                                                    onchange={handleCommentEditTextChange}
+                                                                    class="edit-textarea slds-m-top_xx-small">
+                                                                </lightning-textarea>
+                                                                <div class="slds-m-top_x-small">
+                                                                    <lightning-button
+                                                                        label="Save"
+                                                                        variant="brand"
+                                                                        data-comment-id={comment.id}
+                                                                        data-feed-item-id={item.id}
+                                                                        onclick={handleSaveCommentEdit}
+                                                                        class="slds-m-right_xx-small">
+                                                                    </lightning-button>
+                                                                    <lightning-button
+                                                                        label="Cancel"
+                                                                        variant="neutral"
+                                                                        data-comment-id={comment.id}
+                                                                        data-feed-item-id={item.id}
+                                                                        onclick={handleCancelCommentEdit}>
+                                                                    </lightning-button>
+                                                                </div>
+                                                            </template>
+
+                                                            <!-- Comment actions -->
+                                                            <template if:false={comment.isEditing}>
+                                                                <div class="comment-actions slds-m-top_x-small">
+                                                                    <!-- Edit action -->
+                                                                    <template if:true={comment.canEdit}>
+                                                                        <a href="javascript:void(0);"
+                                                                           class="slds-text-link slds-m-right_medium"
+                                                                           data-comment-id={comment.id}
+                                                                           data-feed-item-id={item.id}
+                                                                           onclick={handleEditComment}>
+                                                                            Edit
+                                                                        </a>
+                                                                    </template>
+
+                                                                    <!-- Delete action -->
+                                                                    <template if:true={comment.canDelete}>
+                                                                        <a href="javascript:void(0);"
+                                                                           class="slds-text-link"
+                                                                           data-comment-id={comment.id}
+                                                                           onclick={handleDeleteComment}>
+                                                                            Delete
+                                                                        </a>
+                                                                    </template>
+                                                                </div>
+                                                            </template>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </li>
+                                        </template>
+                                    </ul>
+                                </div>
+                            </template>
+
+                            <!-- New Comment Input (Gray Background) -->
+                            <div class="new-comment-input">
+                                <div class="slds-media">
+                                    <div class="slds-media__figure">
+                                        <span class="slds-avatar slds-avatar_circle slds-avatar_medium">
+                                            <img src="/img/profile/avatar.png" alt="Current User" />
+                                        </span>
+                                    </div>
+                                    <div class="slds-media__body">
+                                        <lightning-textarea
+                                            name="comment"
+                                            placeholder="Write a comment..."
+                                            value={item.commentText}
+                                            data-feed-item-id={item.id}
+                                            onchange={handleCommentChange}
+                                            variant="label-hidden"
+                                            class="comment-textarea">
+                                        </lightning-textarea>
+                                        <div class="slds-m-top_x-small comment-button-container">
+                                            <lightning-button
+                                                label="Comment"
+                                                variant="brand"
+                                                data-feed-item-id={item.id}
+                                                onclick={handleCommentSubmit}
+                                                class="comment-submit-button">
+                                            </lightning-button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </article>
+                    </li>
+                </template>
+            </ul>
+        </template>
+
+        <!-- Empty State -->
+        <template if:false={hasFeedItems}>
+            <template if:false={isLoading}>
+                <div class="slds-align_absolute-center slds-m-vertical_xx-large">
+                    <div class="slds-text-align_center">
+                        <div class="slds-m-bottom_small">
+                            <svg class="slds-icon slds-icon-text-default" style="width: 4rem; height: 4rem;" aria-hidden="true">
+                                <use xlink:href="/assets/icons/standard-sprite/svg/symbols.svg#feed"></use>
+                            </svg>
+                        </div>
+                        <p class="slds-text-heading_small slds-m-bottom_xx-small">No posts yet</p>
+                        <p class="slds-text-body_regular slds-text-color_weak">
+                            Be the first to share an update!
+                        </p>
+                    </div>
+                </div>
+            </template>
+        </template>
+    </div>
+</template>

@@ -1,0 +1,4 @@
+<template>
+    <lightning-combobox label="Parent Control" value={parentValue} options={parentOptions} onchange={handleParentChange}></lightning-combobox>
+    <lightning-combobox label="Child Dependent" value={childValue} options={filteredChildOptions} onchange={handleChildChange} disabled={isChildDisabled}></lightning-combobox>
+</template>

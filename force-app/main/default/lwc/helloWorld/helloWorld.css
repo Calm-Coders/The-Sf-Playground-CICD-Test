@@ -1,0 +1,6 @@
+.slds-m-around_medium {
+    background-color: rgb(212, 212, 212);
+}
+.slds-m-around_medium > p{ 
+    color: rgb(46, 32, 32);
+}
