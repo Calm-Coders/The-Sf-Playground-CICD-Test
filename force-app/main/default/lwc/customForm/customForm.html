@@ -1,0 +1,76 @@
+<template>
+    <lightning-record-edit-form
+        record-id={recordId}
+        object-api-name="Account">
+
+        <div class="field-container">
+            <template for:each={fieldMap} for:item="field">
+
+                <!-- VIEW -->
+                <template if:false={field.isEdit}>
+                    <div key={field.name} class="field-view" style="display: flex; flex-direction: column">
+                            
+                        <label class="slds-form-element__label" style="font-weight: 600;">{field.name}</label>
+
+                        <template if:true={field.isText}>
+                            <lightning-formatted-text value={field.value}></lightning-formatted-text>
+                        </template>
+                        <template if:true={field.isEmail}>
+                            <lightning-formatted-email value={field.value}></lightning-formatted-email>
+                        </template>
+                        <template if:true={field.isPhone}>
+                            <lightning-formatted-phone value={field.value}></lightning-formatted-phone>
+                        </template>
+                        <template if:true={field.isNumber}>
+                            <lightning-formatted-number value={field.value}></lightning-formatted-number>
+                        </template>
+                        <template if:true={field.isDateTime}>
+                            <lightning-formatted-date-time value={field.value}></lightning-formatted-date-time>
+                        </template>
+                        <template if:true={field.isCheckbox}>
+                            <lightning-input 
+                                type="checkbox" 
+                                label={field.label} 
+                                checked={field.value} 
+                                disabled>
+                            </lightning-input>
+                        </template>
+                        <lightning-button-icon
+                                icon-name="utility:edit"
+                                alternative-text="Edit"
+                                data-field-api-name={field.name}
+                                onclick={handleFieldEdit}
+                                size="small"
+                                variant="bare">
+                            </lightning-button-icon>                    
+                    </div>
+                </template>
+
+                <!-- EDIT -->
+                <template if:true={field.isEdit}>
+                    <div key={field.name} class="field-edit">
+                        <template if:true={field.isCheckbox}>
+                            <lightning-input
+                                type="checkbox"
+                                label={field.label}
+                                checked={field.value}
+                                data-field-api-name={field.name}>
+                            </lightning-input>
+                        </template>
+                        <template if:false={field.isCheckbox}>
+                            <lightning-input
+                                type={field.type}
+                                label={field.label}
+                                value={field.value}
+                                data-field-api-name={field.name}
+                                onblur={handleFieldBlur}>
+                            </lightning-input>
+                        </template>
+                    </div>
+                </template>
+
+            </template>
+        </div>
+
+    </lightning-record-edit-form>
+</template>

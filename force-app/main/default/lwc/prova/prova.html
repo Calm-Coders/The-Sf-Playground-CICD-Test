@@ -1,0 +1,71 @@
+<template>
+    <fieldset class="slds-form-element slds-theme_default slds-p-top_medium slds-p-right_medium slds-p-bottom_medium slds-p-left_medium">
+        <legend class="slds-form-element__legend slds-form-element__label">Find a service resource</legend>
+        <div class="slds-form-element__control">
+            <!-- Option 1 -->
+            <div class="slds-radio">
+                <input type="radio" id="byWork" name="searchMode" value="byWork" checked={isByWork} onchange={handleModeChange}/>
+                <label class="slds-radio__label" for="byWork">
+                    <span class="slds-radio_faux"></span>
+                    <span class="slds-form-element__label">By work type group, appointment type, or service territory</span>
+                </label>
+            </div>
+
+            <!-- Option 2 -->
+            <div class="slds-radio">
+                <input type="radio" id="byName" name="searchMode" value="byName" checked={isByName} onchange={handleModeChange}/>
+                <label class="slds-radio__label" for="byName">
+                    <span class="slds-radio_faux"></span>
+                    <span class="slds-form-element__label">By name</span>
+                </label>
+                 <div class="slds-m-bottom_small slds-m-left_medium">
+                    <lightning-input
+                        type="search"
+                        onchange={handleSearchInput}
+                        value={searchTerm}>
+                    </lightning-input>
+                </div>
+            </div>
+
+            <!-- Option 3 -->
+            <div class="slds-radio">
+                <input type="radio" id="byPrevious" name="searchMode" value="byPrevious" checked={isByPrevious} onchange={handleModeChange}/>
+                <label class="slds-radio__label" for="byPrevious">
+                    <span class="slds-radio_faux"></span>
+                    <span class="slds-form-element__label">By previously scheduled service appointments</span>
+                </label>
+                <div class="slds-box slds-theme_default slds-m-top_medium slds-m-left_medium" style="max-width: 350px; width: 100%; padding: 0.5rem;">
+                    <div class="slds-media slds-media_center">
+                        <!-- Avatar -->
+                        <div class="slds-media__figure" style="padding: 5px;">
+                            <lightning-avatar
+                                size="large"
+                                icon-name="standard:person_account"
+                                variant="circle"
+                                src="/profilephoto/005/F"> <!-- avatarUrl -->
+                            </lightning-avatar>
+                        </div>
+
+                        <!-- Text block -->
+                        <div class="slds-media__body slds-p-left_small">
+                            <h2 class="slds-text-title_bold slds-truncate" title="Dr CommunityTest Testing"> <!-- resourceName -->
+                                Dr CommunityTest Testing
+                            </h2>
+                            <p class="slds-truncate slds-m-vertical_xxx-small">Technician</p> <!-- role -->
+                            <p class="slds-truncate slds-m-vertical_xxx-small">true</p> <!-- isActive -->
+                            <p class="slds-text-color_weak slds-truncate slds-m-vertical_xxx-small">Last service appointment: 
+                                <lightning-formatted-date-time
+                                    value="2025-06-30"
+                                    year="numeric"
+                                    month="short"
+                                    day="2-digit">
+                                </lightning-formatted-date-time>
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </fieldset>
+
+</template>
