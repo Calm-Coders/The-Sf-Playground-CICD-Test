@@ -79,13 +79,12 @@ jobs:
 
           echo "Generating delta between $BASE_SHA and $HEAD_SHA"
 
-          # Generate delta with .gitignore support
+          # Generate delta with updated flags (--output-dir and --ignore-file)
           sf sgd source delta \
             --from "$BASE_SHA" \
             --to "$HEAD_SHA" \
-            --output delta-package \
-            --generate-delta \
-            --ignore .gitignore
+            --output-dir delta-package \
+            --ignore-file .gitignore
 
           echo "=== Delta Package Contents ==="
           if [ -f "delta-package/package/package.xml" ]; then
@@ -115,9 +114,9 @@ jobs:
             TEST_LEVEL="RunLocalTests"
           fi
 
+          # Use --manifest only (not both --manifest and --source-dir)
           sf project deploy start \
             --manifest delta-package/package/package.xml \
-            --source-dir delta-package/force-app \
             --target-org target-org \
             --test-level $TEST_LEVEL \
             --dry-run \
