@@ -116,10 +116,10 @@ jobs:
             echo "test_level=NoTestRun" >> $GITHUB_OUTPUT
           fi
 
-      - name: Validate Deployment (Check Only)
+      - name: Deploy to Salesforce
         if: steps.delta.outputs.has_changes == 'true'
         run: |
-          echo "Validating deployment to ${{ steps.target-org.outputs.target_org }} org (check-only)..."
+          echo "Deploying to ${{ steps.target-org.outputs.target_org }} org..."
           echo "Test Level: ${{ steps.test-level.outputs.test_level }}"
 
           # Use --manifest only (not both --manifest and --source-dir)
@@ -127,7 +127,6 @@ jobs:
             --manifest delta-package/package/package.xml \
             --target-org target-org \
             --test-level ${{ steps.test-level.outputs.test_level }} \
-            --dry-run \
             --ignore-warnings \
             --api-version ${{ env.SF_API_VERSION }} \
             --wait 120
@@ -149,12 +148,12 @@ jobs:
             let body;
             if (success) {
               if (hasChanges) {
-                body = `✅ **Validation Successful**\n\n| | |\n|---|---|\n| **Source Branch** | \`${headBranch}\` |\n| **Target Branch** | \`${baseBranch}\` |\n| **Target Org** | **${targetOrg}** |\n| **API Version** | ${apiVersion} |\n| **Test Level** | ${testLevel} |\n\nThe deployment has been validated. Once this PR is approved, the changes will be deployed automatically.\n\n💡 *To run all tests, include \`RUN_ALL_TESTS\` in the PR title.*`;
+                body = `✅ **Deployment Successful**\n\n| | |\n|---|---|\n| **Source Branch** | \`${headBranch}\` |\n| **Target Branch** | \`${baseBranch}\` |\n| **Deployed To** | **${targetOrg}** |\n| **API Version** | ${apiVersion} |\n| **Test Level** | ${testLevel} |\n\nThe changes have been deployed to the ${targetOrg} org.\n\n💡 *To run all tests, include \`RUN_ALL_TESTS\` in the PR title.*`;
               } else {
                 body = `ℹ️ **No Metadata Changes Detected**\n\n| | |\n|---|---|\n| **Source Branch** | \`${headBranch}\` |\n| **Target Branch** | \`${baseBranch}\` |\n\nNo Salesforce metadata changes found in this PR.`;
               }
             } else {
-              body = `❌ **Validation Failed**\n\n| | |\n|---|---|\n| **Source Branch** | \`${headBranch}\` |\n| **Target Branch** | \`${baseBranch}\` |\n| **Target Org** | **${targetOrg}** |\n| **API Version** | ${apiVersion} |\n\nPlease check the [workflow logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.`;
+              body = `❌ **Deployment Failed**\n\n| | |\n|---|---|\n| **Source Branch** | \`${headBranch}\` |\n| **Target Branch** | \`${baseBranch}\` |\n| **Target Org** | **${targetOrg}** |\n| **API Version** | ${apiVersion} |\n| **Test Level** | ${testLevel} |\n\nPlease check the [workflow logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.`;
             }
 
             // Find existing comment
@@ -166,7 +165,7 @@ jobs:
 
             const botComment = comments.find(comment =>
               comment.user.type === 'Bot' &&
-              comment.body.includes('Validation')
+              (comment.body.includes('Deployment') || comment.body.includes('Validation'))
             );
 
             if (botComment) {
