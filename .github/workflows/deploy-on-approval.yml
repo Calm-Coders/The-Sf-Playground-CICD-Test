@@ -235,3 +235,143 @@ jobs:
               issue_number: context.payload.pull_request.number,
               body: `❌ **Deployment Failed!**\n\n| | |\n|---|---|\n| **Source Branch** | \`${headBranch}\` |\n| **Target Branch** | \`${baseBranch}\` |\n| **Target Org** | **${targetOrg}** |\n| **API Version** | ${apiVersion} |\n\nPlease check the [workflow logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.\n\nThe PR will NOT be merged until deployment succeeds.`
             });
+
+          if [ -f "delta-package/package/package.xml" ]; then
+            cat delta-package/package/package.xml
+          else
+            echo "No changes detected in package.xml"
+          fi
+
+          echo "=== Destructive Changes ==="
+          if [ -f "delta-package/destructiveChanges/destructiveChanges.xml" ]; then
+            cat delta-package/destructiveChanges/destructiveChanges.xml
+          else
+            echo "No destructive changes detected"
+          fi
+
+      - name: Determine Test Level
+        if: steps.target-org.outputs.skip_deployment != 'true'
+        id: test-level
+        run: |
+          PR_TITLE="${{ github.event.pull_request.title }}"
+
+          # Check if PR title contains RUN_ALL_TESTS
+          if [[ "$PR_TITLE" == *"RUN_ALL_TESTS"* ]]; then
+            echo "PR title contains RUN_ALL_TESTS - will run all local tests"
+            echo "test_level=RunLocalTests" >> $GITHUB_OUTPUT
+          else
+            echo "PR title does not contain RUN_ALL_TESTS - skipping tests"
+            echo "test_level=NoTestRun" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Deploy Delta to Salesforce
+        if: steps.target-org.outputs.skip_deployment != 'true'
+        id: deploy
+        run: |
+          if [ -f "delta-package/package/package.xml" ]; then
+            echo "Deploying delta package to ${{ steps.target-org.outputs.target_org }} org..."
+            echo "Test Level: ${{ steps.test-level.outputs.test_level }}"
+
+            # Use --manifest only (not both --manifest and --source-dir)
+            sf project deploy start \
+              --manifest delta-package/package/package.xml \
+              --target-org target-org \
+              --test-level ${{ steps.test-level.outputs.test_level }} \
+              --ignore-warnings \
+              --api-version ${{ env.SF_API_VERSION }} \
+              --wait 120
+
+            echo "deployment_success=true" >> $GITHUB_OUTPUT
+          else
+            echo "No metadata changes to deploy"
+            echo "deployment_success=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Handle Destructive Changes
+        if: steps.target-org.outputs.skip_deployment != 'true' && steps.deploy.outputs.deployment_success == 'true'
+        run: |
+          if [ -f "delta-package/destructiveChanges/destructiveChanges.xml" ]; then
+            echo "Deploying destructive changes..."
+            sf project deploy start \
+              --manifest delta-package/destructiveChanges/destructiveChanges.xml \
+              --target-org target-org \
+              --post-destructive-changes delta-package/destructiveChanges/destructiveChanges.xml \
+              --ignore-warnings \
+              --api-version ${{ env.SF_API_VERSION }} \
+              --wait 60
+          else
+            echo "No destructive changes to deploy"
+          fi
+
+      - name: Resume Deployment if Needed (Production Only)
+        if: failure() && steps.target-org.outputs.target_org == 'PROD'
+        run: |
+          echo "Attempting to resume the most recent deployment..."
+          sf project deploy resume --use-most-recent || echo "No deployment to resume"
+
+      - name: Auto-Merge PR on Successful Deployment
+        if: steps.target-org.outputs.skip_deployment != 'true' && steps.deploy.outputs.deployment_success == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const prNumber = context.payload.pull_request.number;
+            const targetOrg = '${{ steps.target-org.outputs.target_org }}';
+            const baseBranch = '${{ github.event.pull_request.base.ref }}';
+            const headBranch = '${{ github.event.pull_request.head.ref }}';
+            const apiVersion = '${{ env.SF_API_VERSION }}';
+
+            try {
+              // Merge the PR
+              await github.rest.pulls.merge({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber,
+                merge_method: 'squash',
+                commit_title: `Merge PR #${prNumber}: ${context.payload.pull_request.title}`,
+                commit_message: `Deployed successfully to ${targetOrg} org\n\nSource: ${headBranch}\nTarget: ${baseBranch}\nAPI Version: ${apiVersion}`
+              });
+
+              console.log(`Successfully merged PR #${prNumber}`);
+
+              const testLevel = '${{ steps.test-level.outputs.test_level }}';
+
+              // Add a comment
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: `✅ **Deployment Successful!**\n\n| | |\n|---|---|\n| **Source Branch** | \`${headBranch}\` |\n| **Target Branch** | \`${baseBranch}\` |\n| **Deployed To** | **${targetOrg}** |\n| **API Version** | ${apiVersion} |\n| **Test Level** | ${testLevel} |\n\nPR has been automatically merged.`
+              });
+
+            } catch (error) {
+              console.error('Failed to merge PR:', error);
+
+              // Add failure comment
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: `⚠️ **Deployment succeeded but auto-merge failed**\n\n| | |\n|---|---|\n| **Source Branch** | \`${headBranch}\` |\n| **Target Branch** | \`${baseBranch}\` |\n| **Deployed To** | **${targetOrg}** |\n| **API Version** | ${apiVersion} |\n\nPlease merge manually.\nError: ${error.message}`
+              });
+
+              throw error;
+            }
+
+      - name: Comment on Deployment Failure
+        if: failure() && steps.target-org.outputs.skip_deployment != 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const targetOrg = '${{ steps.target-org.outputs.target_org }}';
+            const baseBranch = '${{ github.event.pull_request.base.ref }}';
+            const headBranch = '${{ github.event.pull_request.head.ref }}';
+            const apiVersion = '${{ env.SF_API_VERSION }}';
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: `❌ **Deployment Failed!**\n\n| | |\n|---|---|\n| **Source Branch** | \`${headBranch}\` |\n| **Target Branch** | \`${baseBranch}\` |\n| **Target Org** | **${targetOrg}** |\n| **API Version** | ${apiVersion} |\n\nPlease check the [workflow logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.\n\nThe PR will NOT be merged until deployment succeeds.`
+            });
