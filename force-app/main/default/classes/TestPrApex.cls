@@ -4,6 +4,6 @@ public with sharing class TestPrApex {
     }
 
     public static string returnString() { 
-        return 'asdasdasdasd';
+        return 'teeeeeeeeSTTTTT';
     }
 }
