@@ -182,14 +182,18 @@ jobs:
         if: steps.deploy.outputs.deployment_success == 'true'
         run: |
           if [ -f "delta-package/destructiveChanges/destructiveChanges.xml" ]; then
-            echo "Deploying destructive changes..."
-            sf project deploy start \
-              --manifest delta-package/destructiveChanges/destructiveChanges.xml \
-              --target-org target-org \
-              --post-destructive-changes delta-package/destructiveChanges/destructiveChanges.xml \
-              --ignore-warnings \
-              --api-version ${{ env.SF_API_VERSION }} \
-              --wait 60
+            if grep -q "<types>" delta-package/destructiveChanges/destructiveChanges.xml; then
+              echo "Deploying destructive changes..."
+              sf project deploy start \
+                --manifest delta-package/destructiveChanges/destructiveChanges.xml \
+                --target-org target-org \
+                --post-destructive-changes delta-package/destructiveChanges/destructiveChanges.xml \
+                --ignore-warnings \
+                --api-version ${{ env.SF_API_VERSION }} \
+                --wait 60
+            else
+              echo "destructiveChanges.xml exists but contains no types - skipping"
+            fi
           else
             echo "No destructive changes to deploy"
           fi
