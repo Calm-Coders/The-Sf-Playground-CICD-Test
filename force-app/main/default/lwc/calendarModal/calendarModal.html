@@ -1,0 +1,27 @@
+<template>
+    <div class="slds-modal__header">
+        <h2 class="slds-modal__title slds-hyphenate">Vista Modal</h2>
+        <lightning-button-icon
+            class="calendarModalExitButton slds-modal__close"
+            icon-name="utility:close"
+            alternative-text="Close"
+            variant="bare"
+            onclick={handleClose}>
+        </lightning-button-icon>
+    </div>
+
+    <lightning-modal-body>
+        <div class="slds-p-around_medium">
+            <p class="slds-text-heading_small slds-m-bottom_medium">
+                Selected Date: {startDate}
+            </p>
+            <p class="slds-text-body_regular">
+                This is the Vista Modal. Customize this page as needed for your project.
+            </p>
+        </div>
+    </lightning-modal-body>
+
+    <lightning-modal-footer>
+        <lightning-button variant="neutral" label="Close" onclick={handleClose}></lightning-button>
+    </lightning-modal-footer>
+</template>
