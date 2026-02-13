@@ -9,7 +9,7 @@ env:
   SF_API_VERSION: '64.0'
 
 jobs:
-  validate-and-deploy-on-approval:
+  validate-deployment:
     # Only run when PR is approved AND targets UAT or Production
     if: >-
       github.event.review.state == 'approved' &&
