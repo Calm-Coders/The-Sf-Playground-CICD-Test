@@ -4,6 +4,12 @@ on:
   issue_comment:
     types: [created]
 
+permissions:
+  actions: write
+  contents: read
+  issues: write
+  pull-requests: write
+
 jobs:
   trigger-deployment:
     # Only run when someone comments "/approve" on a pull request
