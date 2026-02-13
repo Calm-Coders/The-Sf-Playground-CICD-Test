@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ren:*)",
+      "Bash(sf project deploy start:*)",
+      "Bash(sf data query:*)",
+      "Bash(where:*)",
+      "Bash(\"C:/Program Files/sf/bin/sf.cmd\" data query --query \"SELECT Id, Name FROM StaticResource WHERE Name = ''fullCalendarCSS''\" --json --target-org stivenqehaja@mindful-moose-qwk6t2.com)",
+      "Bash(cmd /c \"sf data query --query \"\"SELECT Id, Name FROM StaticResource WHERE Name = ''fullCalendarCSS''\"\" --json\")",
+      "Bash(cmd /c:*)",
+      "Bash(powershell:*)"
+    ]
+  }
+}
