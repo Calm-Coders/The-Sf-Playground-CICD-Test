@@ -3,6 +3,8 @@ name: Deploy on PR Approval
 on:
   pull_request_review:
     types: [submitted]
+  issue_comment:
+    types: [created]
 
 # Configuration - Update these values as needed
 env:
@@ -10,19 +12,77 @@ env:
 
 jobs:
   validate-deployment:
-    # Only run when PR is approved AND targets UAT or Production
+    # Run when:
+    # 1. PR is approved AND targets UAT or Production, OR
+    # 2. Someone comments "/approve" on a PR targeting UAT or Production
     if: >-
-      github.event.review.state == 'approved' &&
-      (github.event.pull_request.base.ref == 'UAT' || github.event.pull_request.base.ref == 'Production')
+      (github.event_name == 'pull_request_review' &&
+       github.event.review.state == 'approved' &&
+       (github.event.pull_request.base.ref == 'UAT' || github.event.pull_request.base.ref == 'Production'))
+      ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       contains(github.event.comment.body, '/approve'))
     runs-on: ubuntu-latest
     timeout-minutes: 180
 
     steps:
+      # ============================================================
+      # RESOLVE PR DETAILS: Handle both review and comment triggers
+      # ============================================================
+      - name: Get PR details (comment trigger)
+        if: github.event_name == 'issue_comment'
+        id: pr-details
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number
+            });
+            core.setOutput('base_ref', pr.data.base.ref);
+            core.setOutput('head_ref', pr.data.head.ref);
+            core.setOutput('head_sha', pr.data.head.sha);
+            core.setOutput('pr_number', pr.data.number);
+            core.setOutput('pr_title', pr.data.title);
+
+      - name: Validate comment trigger targets UAT or Production
+        if: github.event_name == 'issue_comment'
+        id: validate-comment
+        run: |
+          BASE_REF="${{ steps.pr-details.outputs.base_ref }}"
+          if [[ "$BASE_REF" != "UAT" && "$BASE_REF" != "Production" ]]; then
+            echo "PR targets $BASE_REF, not UAT or Production. Skipping."
+            echo "valid=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          echo "valid=true" >> $GITHUB_OUTPUT
+
+      - name: Set unified PR variables
+        id: pr-vars
+        run: |
+          if [[ "${{ github.event_name }}" == "issue_comment" ]]; then
+            echo "base_ref=${{ steps.pr-details.outputs.base_ref }}" >> $GITHUB_OUTPUT
+            echo "head_ref=${{ steps.pr-details.outputs.head_ref }}" >> $GITHUB_OUTPUT
+            echo "head_sha=${{ steps.pr-details.outputs.head_sha }}" >> $GITHUB_OUTPUT
+            echo "pr_number=${{ steps.pr-details.outputs.pr_number }}" >> $GITHUB_OUTPUT
+            echo "pr_title=${{ steps.pr-details.outputs.pr_title }}" >> $GITHUB_OUTPUT
+          else
+            echo "base_ref=${{ github.event.pull_request.base.ref }}" >> $GITHUB_OUTPUT
+            echo "head_ref=${{ github.event.pull_request.head.ref }}" >> $GITHUB_OUTPUT
+            echo "head_sha=${{ github.event.pull_request.head.sha }}" >> $GITHUB_OUTPUT
+            echo "pr_number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+            echo "pr_title=${{ github.event.pull_request.title }}" >> $GITHUB_OUTPUT
+          fi
+
       - name: Determine Target Org
+        if: steps.validate-comment.outputs.valid != 'false'
         id: target-org
         run: |
-          BASE_BRANCH="${{ github.event.pull_request.base.ref }}"
-          HEAD_BRANCH="${{ github.event.pull_request.head.ref }}"
+          BASE_BRANCH="${{ steps.pr-vars.outputs.base_ref }}"
+          HEAD_BRANCH="${{ steps.pr-vars.outputs.head_ref }}"
 
           echo "PR: $HEAD_BRANCH -> $BASE_BRANCH"
 
@@ -69,8 +129,8 @@ jobs:
           mkdir -p delta-package
 
           # Get the merge base between the PR branch and target branch
-          BASE_SHA=$(git merge-base origin/${{ github.event.pull_request.base.ref }} ${{ github.event.pull_request.head.sha }})
-          HEAD_SHA=${{ github.event.pull_request.head.sha }}
+          BASE_SHA=$(git merge-base origin/${{ steps.pr-vars.outputs.base_ref }} ${{ steps.pr-vars.outputs.head_sha }})
+          HEAD_SHA=${{ steps.pr-vars.outputs.head_sha }}
 
           echo "Generating delta between $BASE_SHA and $HEAD_SHA"
 
@@ -99,7 +159,7 @@ jobs:
       - name: Determine Test Level
         id: test-level
         run: |
-          PR_TITLE="${{ github.event.pull_request.title }}"
+          PR_TITLE="${{ steps.pr-vars.outputs.pr_title }}"
 
           if [[ "$PR_TITLE" == *"RUN_ALL_TESTS"* ]]; then
             echo "PR title contains RUN_ALL_TESTS - will run all local tests"
@@ -139,15 +199,16 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const targetOrg = '${{ steps.target-org.outputs.target_org }}';
-            const baseBranch = '${{ github.event.pull_request.base.ref }}';
-            const headBranch = '${{ github.event.pull_request.head.ref }}';
+            const baseBranch = '${{ steps.pr-vars.outputs.base_ref }}';
+            const headBranch = '${{ steps.pr-vars.outputs.head_ref }}';
             const apiVersion = '${{ env.SF_API_VERSION }}';
             const testLevel = '${{ steps.test-level.outputs.test_level }}';
+            const prNumber = ${{ steps.pr-vars.outputs.pr_number }};
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
+              issue_number: prNumber,
               body: `🔍 **Pre-Deploy Validation Passed**\n\n| | |\n|---|---|\n| **Source Branch** | \`${headBranch}\` |\n| **Target Branch** | \`${baseBranch}\` |\n| **Target Org** | **${targetOrg}** |\n| **API Version** | ${apiVersion} |\n| **Test Level** | ${testLevel} |\n\nValidation successful. Now deploying to ${targetOrg} org...`
             });
 
@@ -210,10 +271,11 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const prNumber = context.payload.pull_request.number;
+            const prNumber = ${{ steps.pr-vars.outputs.pr_number }};
             const targetOrg = '${{ steps.target-org.outputs.target_org }}';
-            const baseBranch = '${{ github.event.pull_request.base.ref }}';
-            const headBranch = '${{ github.event.pull_request.head.ref }}';
+            const baseBranch = '${{ steps.pr-vars.outputs.base_ref }}';
+            const headBranch = '${{ steps.pr-vars.outputs.head_ref }}';
+            const prTitle = `${{ steps.pr-vars.outputs.pr_title }}`;
             const apiVersion = '${{ env.SF_API_VERSION }}';
 
             try {
@@ -223,7 +285,7 @@ jobs:
                 repo: context.repo.repo,
                 pull_number: prNumber,
                 merge_method: 'squash',
-                commit_title: `Merge PR #${prNumber}: ${context.payload.pull_request.title}`,
+                commit_title: `Merge PR #${prNumber}: ${prTitle}`,
                 commit_message: `Deployed successfully to ${targetOrg} org\n\nSource: ${headBranch}\nTarget: ${baseBranch}\nAPI Version: ${apiVersion}`
               });
 
@@ -263,14 +325,15 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const targetOrg = '${{ steps.target-org.outputs.target_org }}';
-            const baseBranch = '${{ github.event.pull_request.base.ref }}';
-            const headBranch = '${{ github.event.pull_request.head.ref }}';
+            const baseBranch = '${{ steps.pr-vars.outputs.base_ref }}';
+            const headBranch = '${{ steps.pr-vars.outputs.head_ref }}';
             const apiVersion = '${{ env.SF_API_VERSION }}';
+            const prNumber = ${{ steps.pr-vars.outputs.pr_number }};
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
+              issue_number: prNumber,
               body: `❌ **Pre-Deploy Validation Failed!**\n\n| | |\n|---|---|\n| **Source Branch** | \`${headBranch}\` |\n| **Target Branch** | \`${baseBranch}\` |\n| **Target Org** | **${targetOrg}** |\n| **API Version** | ${apiVersion} |\n\nThe delta deployment check (dry-run) failed. The changes are **NOT deployable** to the ${targetOrg} org.\n\nPlease check the [workflow logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.\n\n⛔ The PR will NOT be merged. Fix the issues and request a new review.`
             });
 
@@ -281,13 +344,14 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const targetOrg = '${{ steps.target-org.outputs.target_org }}';
-            const baseBranch = '${{ github.event.pull_request.base.ref }}';
-            const headBranch = '${{ github.event.pull_request.head.ref }}';
+            const baseBranch = '${{ steps.pr-vars.outputs.base_ref }}';
+            const headBranch = '${{ steps.pr-vars.outputs.head_ref }}';
             const apiVersion = '${{ env.SF_API_VERSION }}';
+            const prNumber = ${{ steps.pr-vars.outputs.pr_number }};
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
+              issue_number: prNumber,
               body: `❌ **Deployment Failed!**\n\n| | |\n|---|---|\n| **Source Branch** | \`${headBranch}\` |\n| **Target Branch** | \`${baseBranch}\` |\n| **Target Org** | **${targetOrg}** |\n| **API Version** | ${apiVersion} |\n\nValidation passed but the actual deployment failed.\n\nPlease check the [workflow logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.\n\nThe PR will NOT be merged until deployment succeeds.`
             });
