@@ -8,5 +8,6 @@ export default class CalendarModal extends LightningModal {
     handleClose() {
         this.close('closed');
         console.log('asdasdasd');
+        console.log('dfgdfgdfgdfg');
     }
 }
