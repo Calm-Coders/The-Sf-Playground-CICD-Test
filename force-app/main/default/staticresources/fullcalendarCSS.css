@@ -1,0 +1,30 @@
+.calendarHeaderContainer {
+    background:#ffffff;
+    padding-bottom:0.5rem;
+    padding-left:0.5rem;
+    padding-right:0.5rem;
+    padding-top:0.5rem;
+    overflow-y:auto;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+}
+
+.calendarHeaderTitleClinic {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    align-self: center;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+.calendarHeaderControls {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    min-width: 100%;
+}
