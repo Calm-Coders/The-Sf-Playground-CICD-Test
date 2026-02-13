@@ -1,31 +1,44 @@
-name: Handle /approve Command
+# ============================================================
+# /approve Command - Single Gatekeeper Workflow
+#
+# This is the ONLY way to deploy and merge PRs targeting UAT or Production.
+# Comment "/approve" on a PR to trigger: Validate → Deploy → Auto-Merge
+# ============================================================
+name: Deploy via /approve
 
 on:
   issue_comment:
     types: [created]
 
 permissions:
-  actions: write
-  contents: read
+  contents: write
   issues: write
   pull-requests: write
 
+# Configuration
+env:
+  SF_API_VERSION: '64.0'
+
 jobs:
-  trigger-deployment:
+  validate-deploy-merge:
     # Only run when someone comments "/approve" on a pull request
     if: >-
       github.event.issue.pull_request &&
       contains(github.event.comment.body, '/approve')
     runs-on: ubuntu-latest
+    timeout-minutes: 180
+
     steps:
-      - name: Get PR details and trigger deployment
+      # ============================================================
+      # STEP 1: Get PR details and validate target branch
+      # ============================================================
+      - name: Get PR Details
+        id: pr-vars
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const prNumber = context.issue.number;
-
-            // Get PR details to check target branch
             const pr = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -33,34 +46,306 @@ jobs:
             });
 
             const baseBranch = pr.data.base.ref;
+            const headBranch = pr.data.head.ref;
+            const headSha = pr.data.head.sha;
+            const prTitle = pr.data.title;
 
+            // Only allow UAT and Production targets
             if (baseBranch !== 'UAT' && baseBranch !== 'Production') {
-              console.log(`PR targets ${baseBranch}, not UAT or Production. Skipping.`);
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: prNumber,
-                body: `⚠️ \`/approve\` command only works for PRs targeting **UAT** or **Production**. This PR targets **${baseBranch}**.`
+                body: `⚠️ \`/approve\` only works for PRs targeting **UAT** or **Production**. This PR targets **${baseBranch}**.`
               });
+              core.setFailed(`PR targets ${baseBranch}, not UAT or Production.`);
               return;
             }
 
-            // Trigger the deploy-on-approval workflow via workflow_dispatch
-            await github.rest.actions.createWorkflowDispatch({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: 'deploy-on-approval.yml',
-              ref: baseBranch,
-              inputs: {
-                pr_number: String(prNumber)
-              }
-            });
+            // Check if PR is open
+            if (pr.data.state !== 'open') {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: `⚠️ This PR is already **${pr.data.state}**. \`/approve\` only works on open PRs.`
+              });
+              core.setFailed(`PR is ${pr.data.state}`);
+              return;
+            }
 
-            console.log(`Triggered deployment workflow for PR #${prNumber} targeting ${baseBranch}`);
+            core.setOutput('base_ref', baseBranch);
+            core.setOutput('head_ref', headBranch);
+            core.setOutput('head_sha', headSha);
+            core.setOutput('pr_number', String(prNumber));
+            core.setOutput('pr_title', prTitle);
 
+            // Post acknowledgment comment
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: prNumber,
-              body: `🚀 **Deployment triggered via \`/approve\`**\n\nValidation and deployment workflow has been started for PR #${prNumber} targeting **${baseBranch}**.\n\nCheck the [Actions tab](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions) for progress.`
+              body: `🚀 **\`/approve\` received** — Starting validation and deployment pipeline.\n\n| | |\n|---|---|\n| **Source** | \`${headBranch}\` |\n| **Target** | \`${baseBranch}\` |\n| **Commit** | \`${headSha.substring(0, 7)}\` |\n\n⏳ Running validation...`
+            });
+
+      # ============================================================
+      # STEP 2: Determine target org
+      # ============================================================
+      - name: Determine Target Org
+        id: target-org
+        run: |
+          BASE_BRANCH="${{ steps.pr-vars.outputs.base_ref }}"
+
+          case "$BASE_BRANCH" in
+            "UAT")
+              echo "target_org=UAT" >> $GITHUB_OUTPUT
+              echo "auth_url_secret=SFDX_AUTH_URL_UAT" >> $GITHUB_OUTPUT
+              ;;
+            "Production")
+              echo "target_org=PROD" >> $GITHUB_OUTPUT
+              echo "auth_url_secret=SFDX_AUTH_URL_PROD" >> $GITHUB_OUTPUT
+              ;;
+          esac
+
+      # ============================================================
+      # STEP 3: Checkout the PR's source branch
+      # ============================================================
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ steps.pr-vars.outputs.head_ref }}
+
+      # ============================================================
+      # STEP 4: Setup tools
+      # ============================================================
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Salesforce CLI
+        run: |
+          npm install -g @salesforce/cli
+          sf --version
+
+      - name: Install sfdx-git-delta
+        run: |
+          echo "y" | sf plugins install sfdx-git-delta
+          sf plugins
+
+      # ============================================================
+      # STEP 5: Authenticate to Salesforce
+      # ============================================================
+      - name: Authenticate to Salesforce Org
+        run: |
+          echo "${{ secrets[steps.target-org.outputs.auth_url_secret] }}" > sfdx_auth_url.txt
+          sf org login sfdx-url --sfdx-url-file sfdx_auth_url.txt --alias target-org --set-default
+          rm sfdx_auth_url.txt
+
+      # ============================================================
+      # STEP 6: Generate delta package
+      # ============================================================
+      - name: Generate Delta Package
+        id: delta
+        run: |
+          mkdir -p delta-package
+
+          BASE_SHA=$(git merge-base origin/${{ steps.pr-vars.outputs.base_ref }} ${{ steps.pr-vars.outputs.head_sha }})
+          HEAD_SHA=${{ steps.pr-vars.outputs.head_sha }}
+
+          echo "Generating delta between $BASE_SHA and $HEAD_SHA"
+
+          sf sgd source delta \
+            --from "$BASE_SHA" \
+            --to "$HEAD_SHA" \
+            --output-dir delta-package \
+            --ignore-file .gitignore
+
+          echo "=== Delta Package Contents ==="
+          if [ -f "delta-package/package/package.xml" ]; then
+            cat delta-package/package/package.xml
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "No changes detected in package.xml"
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          fi
+
+          echo "=== Destructive Changes ==="
+          if [ -f "delta-package/destructiveChanges/destructiveChanges.xml" ]; then
+            cat delta-package/destructiveChanges/destructiveChanges.xml
+          else
+            echo "No destructive changes detected"
+          fi
+
+      - name: Determine Test Level
+        id: test-level
+        run: |
+          PR_TITLE="${{ steps.pr-vars.outputs.pr_title }}"
+
+          if [[ "$PR_TITLE" == *"RUN_ALL_TESTS"* ]]; then
+            echo "PR title contains RUN_ALL_TESTS - will run all local tests"
+            echo "test_level=RunLocalTests" >> $GITHUB_OUTPUT
+          else
+            echo "PR title does not contain RUN_ALL_TESTS - skipping tests"
+            echo "test_level=NoTestRun" >> $GITHUB_OUTPUT
+          fi
+
+      # ============================================================
+      # STEP 7: Validate (dry-run)
+      # ============================================================
+      - name: Validate Deployment (Dry-Run)
+        if: steps.delta.outputs.has_changes == 'true'
+        id: validation
+        run: |
+          echo "Running validation (dry-run) against ${{ steps.target-org.outputs.target_org }} org..."
+          echo "Test Level: ${{ steps.test-level.outputs.test_level }}"
+
+          sf project deploy start \
+            --manifest delta-package/package/package.xml \
+            --target-org target-org \
+            --test-level ${{ steps.test-level.outputs.test_level }} \
+            --dry-run \
+            --ignore-warnings \
+            --api-version ${{ env.SF_API_VERSION }} \
+            --wait 120
+
+          echo "validation_passed=true" >> $GITHUB_OUTPUT
+          echo "Validation passed!"
+
+      - name: Comment Validation Passed
+        if: steps.delta.outputs.has_changes == 'true' && steps.validation.outputs.validation_passed == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ steps.pr-vars.outputs.pr_number }},
+              body: `🔍 **Validation Passed** — Now deploying to **${{ steps.target-org.outputs.target_org }}** org...`
+            });
+
+      # ============================================================
+      # STEP 8: Deploy
+      # ============================================================
+      - name: Deploy Delta to Salesforce
+        if: steps.delta.outputs.has_changes == 'true' && steps.validation.outputs.validation_passed == 'true'
+        id: deploy
+        run: |
+          echo "Deploying delta package to ${{ steps.target-org.outputs.target_org }} org..."
+
+          sf project deploy start \
+            --manifest delta-package/package/package.xml \
+            --target-org target-org \
+            --test-level ${{ steps.test-level.outputs.test_level }} \
+            --ignore-warnings \
+            --api-version ${{ env.SF_API_VERSION }} \
+            --wait 120
+
+          echo "deployment_success=true" >> $GITHUB_OUTPUT
+
+      - name: Deploy (No Changes)
+        if: steps.delta.outputs.has_changes != 'true'
+        id: deploy-no-changes
+        run: |
+          echo "No metadata changes to deploy"
+          echo "deployment_success=true" >> $GITHUB_OUTPUT
+
+      - name: Handle Destructive Changes
+        if: steps.deploy.outputs.deployment_success == 'true'
+        run: |
+          if [ -f "delta-package/destructiveChanges/destructiveChanges.xml" ]; then
+            if grep -q "<types>" delta-package/destructiveChanges/destructiveChanges.xml; then
+              echo "Deploying destructive changes..."
+              sf project deploy start \
+                --manifest delta-package/destructiveChanges/destructiveChanges.xml \
+                --target-org target-org \
+                --post-destructive-changes delta-package/destructiveChanges/destructiveChanges.xml \
+                --ignore-warnings \
+                --api-version ${{ env.SF_API_VERSION }} \
+                --wait 60
+            else
+              echo "destructiveChanges.xml exists but contains no types - skipping"
+            fi
+          else
+            echo "No destructive changes to deploy"
+          fi
+
+      # ============================================================
+      # STEP 9: Auto-merge the PR
+      # ============================================================
+      - name: Auto-Merge PR
+        if: steps.deploy.outputs.deployment_success == 'true' || steps.deploy-no-changes.outputs.deployment_success == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const prNumber = ${{ steps.pr-vars.outputs.pr_number }};
+            const targetOrg = '${{ steps.target-org.outputs.target_org }}';
+            const baseBranch = '${{ steps.pr-vars.outputs.base_ref }}';
+            const headBranch = '${{ steps.pr-vars.outputs.head_ref }}';
+            const prTitle = `${{ steps.pr-vars.outputs.pr_title }}`;
+            const apiVersion = '${{ env.SF_API_VERSION }}';
+            const testLevel = '${{ steps.test-level.outputs.test_level }}';
+
+            try {
+              await github.rest.pulls.merge({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber,
+                merge_method: 'squash',
+                commit_title: `Merge PR #${prNumber}: ${prTitle}`,
+                commit_message: `Deployed successfully to ${targetOrg} org\n\nSource: ${headBranch}\nTarget: ${baseBranch}\nAPI Version: ${apiVersion}`
+              });
+
+              console.log(`Successfully merged PR #${prNumber}`);
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: `✅ **Deployment Successful & PR Merged!**\n\n| | |\n|---|---|\n| **Source Branch** | \`${headBranch}\` |\n| **Target Branch** | \`${baseBranch}\` |\n| **Deployed To** | **${targetOrg}** |\n| **API Version** | ${apiVersion} |\n| **Test Level** | ${testLevel} |\n\nChanges are live in the ${targetOrg} org and the PR has been merged.`
+              });
+
+            } catch (error) {
+              console.error('Failed to merge PR:', error);
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: `⚠️ **Deployment succeeded but auto-merge failed**\n\n| | |\n|---|---|\n| **Source Branch** | \`${headBranch}\` |\n| **Target Branch** | \`${baseBranch}\` |\n| **Deployed To** | **${targetOrg}** |\n\nPlease merge manually.\nError: ${error.message}`
+              });
+
+              throw error;
+            }
+
+      # ============================================================
+      # FAILURE COMMENTS
+      # ============================================================
+      - name: Comment on Validation Failure
+        if: failure() && steps.delta.outputs.has_changes == 'true' && steps.validation.outputs.validation_passed != 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ steps.pr-vars.outputs.pr_number }},
+              body: `❌ **Validation Failed!**\n\n| | |\n|---|---|\n| **Source Branch** | \`${{ steps.pr-vars.outputs.head_ref }}\` |\n| **Target Branch** | \`${{ steps.pr-vars.outputs.base_ref }}\` |\n| **Target Org** | **${{ steps.target-org.outputs.target_org }}** |\n\nThe deployment check (dry-run) failed. Changes are **NOT deployable**.\n\nCheck the [workflow logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.\n\n⛔ PR will NOT be merged. Fix the issues and comment \`/approve\` again.`
+            });
+
+      - name: Comment on Deployment Failure
+        if: failure() && steps.validation.outputs.validation_passed == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ steps.pr-vars.outputs.pr_number }},
+              body: `❌ **Deployment Failed!**\n\n| | |\n|---|---|\n| **Source Branch** | \`${{ steps.pr-vars.outputs.head_ref }}\` |\n| **Target Branch** | \`${{ steps.pr-vars.outputs.base_ref }}\` |\n| **Target Org** | **${{ steps.target-org.outputs.target_org }}** |\n\nValidation passed but deployment failed.\n\nCheck the [workflow logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.\n\nPR will NOT be merged. Comment \`/approve\` to retry.`
             });
