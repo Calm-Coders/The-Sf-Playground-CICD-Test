@@ -3,6 +3,7 @@
 #
 # This is the ONLY way to deploy and merge PRs targeting UAT or Production.
 # Comment "/approve" on a PR to trigger: Validate → Deploy → Auto-Merge
+# Only members of the "Approver Team" can trigger this workflow.
 # ============================================================
 name: Deploy via /approve
 
@@ -14,10 +15,12 @@ permissions:
   contents: write
   issues: write
   pull-requests: write
+  members: read
 
 # Configuration
 env:
   SF_API_VERSION: '64.0'
+  APPROVER_TEAM_SLUG: 'approver-team'
 
 jobs:
   validate-deploy-merge:
@@ -29,6 +32,53 @@ jobs:
     timeout-minutes: 180
 
     steps:
+      # ============================================================
+      # STEP 0: Verify commenter is in the Approver Team
+      # ============================================================
+      - name: Check Approver Team Membership
+        id: auth-check
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const commenter = context.payload.comment.user.login;
+            const org = context.repo.owner;
+            const teamSlug = '${{ env.APPROVER_TEAM_SLUG }}';
+            const prNumber = context.issue.number;
+
+            console.log(`Checking if @${commenter} is a member of ${org}/${teamSlug}...`);
+
+            try {
+              const response = await github.rest.teams.getMembershipForUserInOrg({
+                org: org,
+                team_slug: teamSlug,
+                username: commenter
+              });
+
+              if (response.data.state === 'active') {
+                console.log(`✅ @${commenter} is an active member of ${teamSlug}`);
+                core.setOutput('authorized', 'true');
+              } else {
+                console.log(`❌ @${commenter} has pending membership in ${teamSlug}`);
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: prNumber,
+                  body: `⛔ @${commenter} — your membership in **${teamSlug}** is pending. Only active members can use \`/approve\`.`
+                });
+                core.setFailed('User membership is pending');
+              }
+            } catch (error) {
+              console.log(`❌ @${commenter} is NOT a member of ${teamSlug}`);
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: `⛔ @${commenter} — you are not authorized to use \`/approve\`. Only members of the **Approver Team** can approve deployments.`
+              });
+              core.setFailed('User is not a member of the Approver Team');
+            }
+
       # ============================================================
       # STEP 1: Get PR details and validate target branch
       # ============================================================
@@ -85,7 +135,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: prNumber,
-              body: `🚀 **\`/approve\` received** — Starting validation and deployment pipeline.\n\n| | |\n|---|---|\n| **Source** | \`${headBranch}\` |\n| **Target** | \`${baseBranch}\` |\n| **Commit** | \`${headSha.substring(0, 7)}\` |\n\n⏳ Running validation...`
+              body: `🚀 **\`/approve\` received from @${context.payload.comment.user.login}** — Starting validation and deployment pipeline.\n\n| | |\n|---|---|\n| **Source** | \`${headBranch}\` |\n| **Target** | \`${baseBranch}\` |\n| **Commit** | \`${headSha.substring(0, 7)}\` |\n\n⏳ Running validation...`
             });
 
       # ============================================================
