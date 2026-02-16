@@ -55,6 +55,11 @@ export default class FullCalendarComponent extends LightningElement {
 
     connectedCallback() {
         this.assignDynamicClasses();
+        // Get Events (If loaded from a Pre-Defined place)
+        
+        /*
+        ...
+        */
     }
 
     renderedCallback() {
